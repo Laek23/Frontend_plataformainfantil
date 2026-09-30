@@ -14,12 +14,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Configurar Node.js
+      # 2. Configurar Node.js con la ruta del package-lock.json
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: 'npm'
+          cache-dependency-path: app_educativa_react/package-lock.json
 
       # 3. Configurar Java JDK 21
       - name: Set up JDK 21
@@ -30,10 +31,12 @@ jobs:
 
       # 4. Instalar dependencias del proyecto React
       - name: Install dependencies
+        working-directory: app_educativa_react
         run: npm ci
 
       # 5. Compilar la aplicación React y sincronizar con Android
       - name: Build React and Sync Capacitor
+        working-directory: app_educativa_react
         env:
           VITE_API_URL: https://backend-infantil.onrender.com/api
         run: |
@@ -42,8 +45,8 @@ jobs:
 
       # 6. Compilar el APK Debug usando Gradle
       - name: Build Debug APK
+        working-directory: app_educativa_react/android
         run: |
-          cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
@@ -52,4 +55,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug.apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: app_educativa_react/android/app/build/outputs/apk/debug/app-debug.apk
