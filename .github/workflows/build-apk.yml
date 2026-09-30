@@ -1,0 +1,55 @@
+pon esto name: Build Android APK Debug
+
+on:
+  push:
+    branches:
+      - main # O la rama principal que uses (ej. master)
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Descargar el código fuente desde GitHub
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Configurar Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      # 3. Configurar Java JDK 17
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '21'
+
+      # 4. Instalar dependencias del proyecto React
+      - name: Install dependencies
+        run: npm ci
+
+      # 5. Compilar la aplicación React y sincronizar con Android
+      - name: Build React and Sync Capacitor
+        env:
+          VITE_API_URL: https://backend-infantil.onrender.com/api
+        run: |
+          npm run build
+          npx cap sync android
+
+      # 6. Compilar el APK Debug usando Gradle
+      - name: Build Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      # 7. Subir el APK generado como Artifact de GitHub
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
