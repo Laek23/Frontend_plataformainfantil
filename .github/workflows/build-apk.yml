@@ -1,9 +1,9 @@
-pon esto name: Build Android APK Debug
+name: Build Android APK Debug
 
 on:
   push:
     branches:
-      - main # O la rama principal que uses (ej. master)
+      - main
 
 jobs:
   build-android:
@@ -21,7 +21,7 @@ jobs:
           node-version: 22
           cache: 'npm'
 
-      # 3. Configurar Java JDK 17
+      # 3. Configurar Java JDK 21
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
