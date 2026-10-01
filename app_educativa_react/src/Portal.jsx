@@ -367,10 +367,21 @@ function App() {
   }
 
   useEffect(() => {
-    if (!token || !user) return
-    if (user.role === 'admin') return
-    loadStudent(token).catch((err) => setError(err.message))
-  }, [token, user?.id])
+    if (!token) return undefined
+
+    let active = true
+    api('/auth/me', token).then(async ({ user: account }) => {
+      if (!active) return
+      localStorage.setItem('auth_user', JSON.stringify(account))
+      setUser(account)
+      setView(account.role === 'admin' ? 'admin' : 'play')
+      if (account.role !== 'admin') await loadStudent(token)
+    }).catch((err) => {
+      if (active) setError(err.message)
+    })
+
+    return () => { active = false }
+  }, [token])
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform() || !token || !user || user.role === 'admin') return
