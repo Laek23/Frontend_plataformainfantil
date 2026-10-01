@@ -8,13 +8,25 @@ const rewardIcons = { sticker: '🦉', glasses: '🥽', aura: '✨', uniform: '�
 const rankFor = (xp) => xp >= 150 ? 'Rango Élite' : xp >= 100 ? 'Maestro Estratega' : xp >= 60 ? 'Explorador Estelar' : xp >= 30 ? 'Aventurero' : 'Cadete'
 
 async function api(path, token, options = {}) {
-  const response = await fetch(`${apiUrl}${path}`, {
-    ...options,
-    headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
-  })
-  const data = response.status === 204 ? {} : await response.json()
-  if (!response.ok) throw new Error(data.message || 'No se pudo completar la solicitud.')
-  return data
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30000)
+
+  try {
+    const response = await fetch(`${apiUrl}${path}`, {
+      ...options,
+      signal: options.signal || controller.signal,
+      headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
+    })
+    const data = response.status === 204 ? {} : await response.json()
+    if (!response.ok) throw new Error(data.message || 'No se pudo completar la solicitud.')
+    return data
+  } catch (requestError) {
+    if (requestError.name === 'AbortError') throw new Error('El servidor tardó demasiado en responder. Revisa tu conexión y vuelve a intentarlo.')
+    if (requestError instanceof TypeError) throw new Error('No se pudo conectar con el servidor. Comprueba tu conexión a internet e inténtalo de nuevo.')
+    throw requestError
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 function AuthView({ onLogin }) {
@@ -50,7 +62,7 @@ function AuthView({ onLogin }) {
           <label>Correo de tu familia<input required type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} /></label>
           <label>Contraseña<input required type="password" minLength="8" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} /></label>
           {mode === 'register' && <label>Repite la contraseña<input required type="password" minLength="8" value={form.password_confirmation} onChange={(event) => setForm({ ...form, password_confirmation: event.target.value })} /></label>}
-          <button className="kids-primary-button" disabled={busy}>{busy ? 'Preparando...' : mode === 'login' ? 'Entrar a jugar' : 'Crear cuenta'}</button>
+          <button className="kids-primary-button" disabled={busy}>{busy ? 'Verificando cuenta...' : mode === 'login' ? 'Entrar a jugar' : 'Crear cuenta'}</button>
         </form>
         {error && <p className="kids-error" role="alert">{error}</p>}
         <button className="kids-text-button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}>
