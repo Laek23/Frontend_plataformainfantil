@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import './style.css'
 
 const apiUrl = import.meta.env.VITE_API_URL || '/api'
@@ -118,7 +120,16 @@ function AdminView({ token, onLogout }) {
   const [selected, setSelected] = useState(null)
   const [activities, setActivities] = useState([])
   const [editing, setEditing] = useState(null)
-  const [newSubject, setNewSubject] = useState({ name: '', description: '', icon: 'auto_stories', accent: '#2877bd' })
+  const [tab, setTab] = useState('content')
+  const [overview, setOverview] = useState({})
+  const [players, setPlayers] = useState([])
+  const [rewards, setRewards] = useState([])
+  const emptySubject = { name: '', description: '', icon: 'auto_stories', accent: '#2877bd' }
+  const emptyReward = { name: '', category: 'sticker', asset: 'stars', description: '', unlock_xp: 10, active: true }
+  const [subjectForm, setSubjectForm] = useState(emptySubject)
+  const [editingSubjectId, setEditingSubjectId] = useState(null)
+  const [rewardForm, setRewardForm] = useState(emptyReward)
+  const [editingRewardId, setEditingRewardId] = useState(null)
   const [error, setError] = useState('')
 
   const refreshSubjects = async () => {
@@ -126,18 +137,51 @@ function AdminView({ token, onLogout }) {
     setSubjects(result.subjects)
     if (selected) setSelected(result.subjects.find((subject) => subject.id === selected.id) || null)
   }
-  useEffect(() => { refreshSubjects().catch((err) => setError(err.message)) }, [])
+
+  const refreshPlayers = async () => setPlayers((await api('/admin/players', token)).players)
+  const refreshRewards = async () => setRewards((await api('/admin/rewards', token)).rewards)
+
+  useEffect(() => {
+    Promise.all([
+      api('/admin/overview', token).then(setOverview),
+      refreshSubjects(),
+      refreshPlayers(),
+      refreshRewards(),
+    ]).catch((err) => setError(err.message))
+  }, [token])
+
   useEffect(() => {
     if (!selected) { setActivities([]); return }
     api(`/admin/subjects/${selected.id}/activities`, token).then((result) => setActivities(result.activities)).catch((err) => setError(err.message))
   }, [selected?.id, token])
 
-  const createSubject = async (event) => {
+  const saveSubject = async (event) => {
     event.preventDefault()
     try {
-      await api('/admin/subjects', token, { method: 'POST', body: JSON.stringify(newSubject) })
-      setNewSubject({ name: '', description: '', icon: 'auto_stories', accent: '#2877bd' })
-      refreshSubjects()
+      const result = await api(editingSubjectId ? `/admin/subjects/${editingSubjectId}` : '/admin/subjects', token, {
+        method: editingSubjectId ? 'PATCH' : 'POST',
+        body: JSON.stringify(subjectForm),
+      })
+      setSubjectForm(emptySubject)
+      setEditingSubjectId(null)
+      await refreshSubjects()
+      if (selected?.id === result.subject.id) setSelected(result.subject)
+    } catch (err) { setError(err.message) }
+  }
+
+  const toggleSubject = async (subject) => {
+    try {
+      await api(`/admin/subjects/${subject.id}`, token, { method: 'PATCH', body: JSON.stringify({ active: !subject.active }) })
+      await refreshSubjects()
+    } catch (err) { setError(err.message) }
+  }
+
+  const deleteSubject = async (subject) => {
+    if (!window.confirm(`¿Eliminar “${subject.name}” y sus actividades?`)) return
+    try {
+      await api(`/admin/subjects/${subject.id}`, token, { method: 'DELETE' })
+      if (selected?.id === subject.id) { setSelected(null); setActivities([]) }
+      await refreshSubjects()
     } catch (err) { setError(err.message) }
   }
 
@@ -156,16 +200,50 @@ function AdminView({ token, onLogout }) {
     } catch (err) { setError(err.message) }
   }
 
+  const saveReward = async (event) => {
+    event.preventDefault()
+    try {
+      await api(editingRewardId ? `/admin/rewards/${editingRewardId}` : '/admin/rewards', token, {
+        method: editingRewardId ? 'PATCH' : 'POST',
+        body: JSON.stringify({ ...rewardForm, unlock_xp: Number(rewardForm.unlock_xp) }),
+      })
+      setRewardForm(emptyReward)
+      setEditingRewardId(null)
+      await refreshRewards()
+    } catch (err) { setError(err.message) }
+  }
+
+  const toggleSubscription = async (player, active) => {
+    try {
+      await api(`/admin/players/${player.id}/subscription`, token, { method: 'PATCH', body: JSON.stringify({ active }) })
+      await refreshPlayers()
+      setOverview((current) => ({ ...current, subscribers: Math.max(0, (current.subscribers || 0) + (active ? 1 : -1)) }))
+    } catch (err) { setError(err.message) }
+  }
+
+  const removeReward = async (reward) => {
+    if (!window.confirm(`¿Eliminar la personalización “${reward.name}”?`)) return
+    try {
+      await api(`/admin/rewards/${reward.id}`, token, { method: 'DELETE' })
+      await refreshRewards()
+    } catch (err) { setError(err.message) }
+  }
+
   return (
     <main className="admin-workspace">
-      <header className="admin-topbar"><div className="brand-group"><div className="brand-mark">A</div><div><div className="eyebrow">AVENTUM · ADMINISTRACIÓN</div><h1>Contenido de aprendizaje</h1></div></div><button className="quiet-button" onClick={onLogout}>Cerrar sesión</button></header>
-      <nav className="admin-tabs"><span className="active">Materias y actividades</span><span>Contenido publicado: {subjects.reduce((sum, subject) => sum + (subject.activities_count || 0), 0)} actividades</span></nav>
+      <header className="admin-topbar"><div className="brand-group"><div className="brand-mark">A</div><div><div className="eyebrow">AVENTUM · ADMINISTRACIÓN</div><h1>Centro de control</h1></div></div><button className="quiet-button" onClick={onLogout}>Cerrar sesión</button></header>
+      <section className="admin-metrics" aria-label="Resumen de la plataforma">
+        {[['Jugadores', overview.players], ['Suscripciones activas', overview.subscribers], ['Materias activas', overview.active_subjects], ['Retos activos', overview.active_activities], ['Personalizaciones', overview.rewards]].map(([label, value]) => <div className="admin-metric" key={label}><strong>{value ?? '…'}</strong><span>{label}</span></div>)}
+      </section>
+      <nav className="admin-tabs" aria-label="Administración">
+        {[["content", 'Materias y actividades'], ['players', 'Jugadores y ranking'], ['subscriptions', 'Suscripciones'], ['rewards', 'Personalizaciones']].map(([key, label]) => <button type="button" className={tab === key ? 'active' : ''} key={key} onClick={() => { setTab(key); setError('') }}>{label}</button>)}
+      </nav>
       {error && <p className="kids-error" role="alert">{error}</p>}
-      <div className="admin-columns">
+      {tab === 'content' && <div className="admin-columns">
         <section className="admin-column">
-          <form className="admin-editor compact-editor" onSubmit={createSubject}><div><span className="kids-eyebrow">BIBLIOTECA DE CONTENIDO</span><h2>Nueva materia</h2></div><label>Nombre<input required value={newSubject.name} onChange={(event) => setNewSubject({ ...newSubject, name: event.target.value })} /></label><label>Descripción<input value={newSubject.description} onChange={(event) => setNewSubject({ ...newSubject, description: event.target.value })} /></label><div className="editor-grid"><label>Icono<input value={newSubject.icon} onChange={(event) => setNewSubject({ ...newSubject, icon: event.target.value })} /></label><label>Color<input type="color" value={newSubject.accent} onChange={(event) => setNewSubject({ ...newSubject, accent: event.target.value })} /></label></div><button className="kids-primary-button">Crear materia</button></form>
+          <form className="admin-editor compact-editor" onSubmit={saveSubject}><div><span className="kids-eyebrow">BIBLIOTECA DE CONTENIDO</span><h2>{editingSubjectId ? 'Editar materia' : 'Nueva materia'}</h2></div><label>Nombre<input required value={subjectForm.name} onChange={(event) => setSubjectForm({ ...subjectForm, name: event.target.value })} /></label><label>Descripción<input value={subjectForm.description} onChange={(event) => setSubjectForm({ ...subjectForm, description: event.target.value })} /></label><div className="editor-grid"><label>Icono<input value={subjectForm.icon} onChange={(event) => setSubjectForm({ ...subjectForm, icon: event.target.value })} /></label><label>Color<input type="color" value={subjectForm.accent} onChange={(event) => setSubjectForm({ ...subjectForm, accent: event.target.value })} /></label></div><div className="admin-form-actions"><button className="kids-primary-button">{editingSubjectId ? 'Guardar materia' : 'Crear materia'}</button>{editingSubjectId && <button type="button" className="quiet-button" onClick={() => { setSubjectForm(emptySubject); setEditingSubjectId(null) }}>Cancelar</button>}</div></form>
           <h2 className="list-heading">Materias <span>{subjects.length}</span></h2>
-          <div className="admin-subject-list">{subjects.map((subject) => <button key={subject.id} className={`admin-subject-row ${selected?.id === subject.id ? 'selected' : ''}`} onClick={() => { setSelected(subject); setEditing(null) }}><span className="subject-dot" style={{ background: subject.accent }}>{subject.icon === 'schedule' ? '⌛' : subject.icon === 'rocket_launch' ? '🚀' : '📚'}</span><span className="subject-row-copy"><strong>{subject.name}</strong><small>{subject.activities_count} actividades · {subject.active ? 'Activa' : 'Pausada'}</small></span><span aria-hidden="true">›</span></button>)}</div>
+          <div className="admin-subject-list">{subjects.map((subject) => <article className="admin-subject-entry" key={subject.id}><button className={`admin-subject-row ${selected?.id === subject.id ? 'selected' : ''}`} onClick={() => { setSelected(subject); setEditing(null) }}><span className="subject-dot" style={{ background: subject.accent }}>{subject.icon === 'schedule' ? '⌛' : subject.icon === 'rocket_launch' ? '🚀' : '📚'}</span><span className="subject-row-copy"><strong>{subject.name}</strong><small>{subject.activities_count} actividades · {subject.active ? 'Activa' : 'Pausada'}</small></span></button><div className="row-controls"><button onClick={() => { setSubjectForm({ name: subject.name, description: subject.description || '', icon: subject.icon, accent: subject.accent }); setEditingSubjectId(subject.id) }}>Editar</button><button onClick={() => toggleSubject(subject)}>{subject.active ? 'Pausar' : 'Activar'}</button><button onClick={() => deleteSubject(subject)}>Eliminar</button></div></article>)}</div>
         </section>
         <section className="admin-column activity-column">
           {selected ? <>
@@ -174,7 +252,10 @@ function AdminView({ token, onLogout }) {
             <div className="activity-admin-list">{activities.map((activity) => <article className={`activity-admin-row ${activity.active ? '' : 'inactive'}`} key={activity.id}><div className="activity-type-mark">{activity.type === 'sumador' ? '＋' : activity.type === 'sopa' ? 'A' : '✎'}</div><div className="activity-row-copy"><strong>{activity.title}</strong><span>{activity.type} · {activity.active ? 'Disponible para jugar' : 'Pausada'}</span></div><div className="row-controls"><button title="Editar actividad" onClick={() => setEditing(activity)}>Editar</button><button title={activity.active ? 'Pausar actividad' : 'Activar actividad'} onClick={() => toggleActivity(activity)}>{activity.active ? 'Pausar' : 'Activar'}</button><button title="Eliminar actividad" onClick={() => deleteActivity(activity)}>Eliminar</button></div></article>)}</div>
           </> : <div className="admin-empty"><span>📚</span><h2>Elige una materia</h2><p>Selecciona una materia para revisar sus retos o agregar una actividad nueva.</p></div>}
         </section>
-      </div>
+      </div>}
+      {tab === 'players' && <section className="admin-table-section"><div className="admin-section-title"><div><span className="kids-eyebrow">PROGRESO</span><h2>Ranking de jugadores</h2></div><span>{players.length} cuentas</span></div><div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>#</th><th>Jugador</th><th>Correo familiar</th><th>Experiencia</th><th>Vidas</th><th>Plan</th></tr></thead><tbody>{players.map((player, index) => <tr key={player.id}><td>{index + 1}</td><td><strong>{player.name}</strong></td><td>{player.email}</td><td>{player.total_xp || 0} XP</td><td>{player.lives}/7</td><td>{player.premium_until && new Date(player.premium_until) > new Date() ? 'Aventurero activo' : 'Explorador'}</td></tr>)}</tbody></table></div></section>}
+      {tab === 'subscriptions' && <section className="admin-table-section"><div className="admin-section-title"><div><span className="kids-eyebrow">PLAN AVENTURERO</span><h2>Suscripciones</h2></div><span>{overview.subscribers || 0} activas</span></div><div className="admin-table-scroll"><table className="admin-table"><thead><tr><th>Jugador</th><th>Correo familiar</th><th>Estado</th><th>Vence</th><th>Vidas</th><th>Acción</th></tr></thead><tbody>{players.map((player) => { const active = player.premium_until && new Date(player.premium_until) > new Date(); return <tr key={player.id}><td><strong>{player.name}</strong></td><td>{player.email}</td><td>{active ? 'Activa' : 'Sin plan'}</td><td>{active ? new Date(player.premium_until).toLocaleDateString() : '—'}</td><td>{player.lives}/7</td><td><button className="admin-action-button" onClick={() => toggleSubscription(player, !active)}>{active ? 'Cancelar plan' : 'Activar 30 días'}</button></td></tr> })}</tbody></table></div></section>}
+      {tab === 'rewards' && <div className="admin-rewards-layout"><form className="admin-editor" onSubmit={saveReward}><div><span className="kids-eyebrow">CATÁLOGO DEL JUGADOR</span><h2>{editingRewardId ? 'Editar personalización' : 'Nueva personalización'}</h2></div><label>Nombre<input required maxLength="100" value={rewardForm.name} onChange={(event) => setRewardForm({ ...rewardForm, name: event.target.value })} /></label><label>Categoría<select value={rewardForm.category} onChange={(event) => setRewardForm({ ...rewardForm, category: event.target.value })}><option value="sticker">Compañero</option><option value="glasses">Lentes</option><option value="aura">Aura</option><option value="uniform">Uniforme</option><option value="rank">Rango</option></select></label><label>Identificador del recurso<input required value={rewardForm.asset} onChange={(event) => setRewardForm({ ...rewardForm, asset: event.target.value })} /></label><label>Descripción<input required maxLength="180" value={rewardForm.description} onChange={(event) => setRewardForm({ ...rewardForm, description: event.target.value })} /></label><label>XP para desbloquear<input required type="number" min="0" value={rewardForm.unlock_xp} onChange={(event) => setRewardForm({ ...rewardForm, unlock_xp: event.target.value })} /></label><div className="admin-form-actions"><button className="kids-primary-button">{editingRewardId ? 'Guardar cambios' : 'Crear personalización'}</button>{editingRewardId && <button type="button" className="quiet-button" onClick={() => { setRewardForm(emptyReward); setEditingRewardId(null) }}>Cancelar</button>}</div></form><section className="admin-table-section"><div className="admin-section-title"><div><span className="kids-eyebrow">CATÁLOGO</span><h2>Personalizaciones</h2></div><span>{rewards.length}</span></div><div className="admin-reward-list">{rewards.map((reward) => <article className="admin-reward-row" key={reward.id}><span className="reward-picture">{({ sticker: '🦉', glasses: '🥽', aura: '✨', uniform: '🧥', rank: '🏅' })[reward.category] || '🎁'}</span><div><strong>{reward.name}</strong><small>{reward.category} · {reward.unlock_xp} XP · {reward.users_count || 0} desbloqueos · {reward.active ? 'Activa' : 'Pausada'}</small></div><div className="row-controls"><button onClick={() => { setRewardForm({ name: reward.name, category: reward.category, asset: reward.asset, description: reward.description, unlock_xp: reward.unlock_xp, active: reward.active }); setEditingRewardId(reward.id) }}>Editar</button><button onClick={async () => { try { await api(`/admin/rewards/${reward.id}`, token, { method: 'PATCH', body: JSON.stringify({ active: !reward.active }) }); await refreshRewards() } catch (err) { setError(err.message) } }}>{reward.active ? 'Pausar' : 'Activar'}</button><button onClick={() => removeReward(reward)}>Eliminar</button></div></article>)}</div></section></div>}
     </main>
   )
 }
@@ -289,8 +370,33 @@ function App() {
     if (!token || !user) return
     if (user.role === 'admin') return
     loadStudent(token).catch((err) => setError(err.message))
-    const sessionId = new URLSearchParams(window.location.search).get('session_id')
-    if (sessionId) api('/billing/confirm', token, { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }).then(() => loadStudent(token)).catch((err) => setError(err.message))
+  }, [token, user?.id])
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || !token || !user || user.role === 'admin') return
+
+    let active = true
+    const listeners = []
+    const refresh = () => loadStudent(token).catch((err) => setError(err.message))
+
+    CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) refresh()
+    }).then((listener) => {
+      if (active) listeners.push(listener)
+      else listener.remove()
+    })
+
+    CapacitorApp.addListener('appUrlOpen', ({ url }) => {
+      if (url.startsWith('aventumkids://stripe-return')) refresh()
+    }).then((listener) => {
+      if (active) listeners.push(listener)
+      else listener.remove()
+    })
+
+    return () => {
+      active = false
+      listeners.forEach((listener) => listener.remove())
+    }
   }, [token, user?.id])
 
   const signIn = (account, accountToken) => {
@@ -342,6 +448,7 @@ function App() {
   }
 
   const buyPlan = async () => {
+    setError('')
     try {
       const result = await api('/billing/checkout', token, { method: 'POST' })
       window.location.assign(result.url)
